@@ -209,35 +209,91 @@ router.put('/approve-order/:orderId', verifyAdmin, (req, res) => {
     );
 });
 
-// Delete order (only accessible to admins)
 router.delete('/delete-order/:orderId', verifyAdmin, (req, res) => {
     const orderId = req.params.orderId;
 
     db.get(
-        `SELECT status FROM orders WHERE id = ?`,
+        `SELECT * FROM orders WHERE id = ?`,
         [orderId],
-        (err, row) => {
+        (err, orderRow) => {
             if (err) {
-                console.error('Error fetching order status:', err.message);
-                return res.status(500).json({ error: 'Failed to check order status' });
+                console.error('Error fetching order:', err.message);
+                return res.status(500).json({ error: 'Failed to fetch order' });
             }
-            if (!row || row.status !== 'in progress') {
-                return res.status(400).json({ error: 'Order must be in progress to delete' });
+            if (!orderRow) {
+                return res.status(404).json({ error: 'Order not found' });
             }
+
+            // Set the status to 'archived'
+            const archivedStatus = 'archived';
 
             db.run(
-                `DELETE FROM orders WHERE id = ?`,
-                [orderId],
-                function (err) {
-                    if (err) {
-                        console.error('Error deleting order:', err.message);
-                        return res.status(500).json({ error: 'Failed to delete order' });
+                `INSERT INTO archived_orders (id, userId, dateCreated, status) 
+                 VALUES (?, ?, ?, ?)`,
+                [orderRow.id, orderRow.userId, orderRow.dateCreated, archivedStatus],  // Set status to 'archived'
+                function (archiveErr) {
+                    if (archiveErr) {
+                        console.error('Error archiving order:', archiveErr.message);
+                        return res.status(500).json({ error: 'Failed to archive order' });
                     }
 
-                    res.status(200).json({ message: 'Order deleted successfully' });
+                    db.all(
+                        `SELECT * FROM orderItems WHERE orderId = ?`,
+                        [orderId],
+                        (itemsErr, itemsRows) => {
+                            if (itemsErr) {
+                                console.error('Error fetching order items:', itemsErr.message);
+                                return res.status(500).json({ error: 'Failed to fetch order items' });
+                            }
+
+                            const itemInsertStmt = db.prepare(
+                                `INSERT INTO archived_orderItems (orderId, itemId, quantity) VALUES (?, ?, ?)`
+                            );
+
+                            let archiveItemPromises = itemsRows.map((item) => {
+                                return new Promise((resolve, reject) => {
+                                    itemInsertStmt.run(orderId, item.itemId, item.quantity, (err) => {
+                                        if (err) {
+                                            reject(err);
+                                        } else {
+                                            resolve();
+                                        }
+                                    });
+                                });
+                            });
+
+                            Promise.all(archiveItemPromises)
+                                .then(() => {
+                                    itemInsertStmt.finalize();
+
+                                    // Delete original records from `orders` and `orderItems`
+                                    db.run(`DELETE FROM orderItems WHERE orderId = ?`, [orderId], function (err) {
+                                        if (err) {
+                                            console.error('Error deleting order items:', err.message);
+                                            return res.status(500).json({ error: 'Failed to delete order items' });
+                                        }
+
+                                        db.run(`DELETE FROM orders WHERE id = ?`, [orderId], function (err) {
+                                            if (err) {
+                                                console.error('Error deleting order:', err.message);
+                                                return res.status(500).json({ error: 'Failed to delete order' });
+                                            }
+
+                                            res.status(200).json({ message: 'Order archived successfully', status: archivedStatus });
+                                        });
+                                    });
+                                })
+                                .catch((err) => {
+                                    console.error('Error archiving order items:', err.message);
+                                    res.status(500).json({ error: 'Failed to archive order items' });
+                                });
+                        }
+                    );
                 }
             );
         }
     );
 });
+
+
 module.exports = router;

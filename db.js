@@ -54,6 +54,29 @@ db.serialize(() => {
         )
     `);
     // Enable foreign key support
+
+     // Create the 'archived_orders' table
+     db.run(`
+        CREATE TABLE IF NOT EXISTS archived_orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            userId INTEGER,
+            dateCreated INTEGER,
+            status TEXT,
+            FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+
+    // Create the 'archived_orderItems' table
+    db.run(`
+        CREATE TABLE IF NOT EXISTS archived_orderItems (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            orderId INTEGER,
+            itemId INTEGER,
+            quantity INTEGER,
+            FOREIGN KEY(orderId) REFERENCES archived_orders(id) ON DELETE CASCADE,
+            FOREIGN KEY(itemId) REFERENCES food(id) ON DELETE CASCADE
+        )
+    `);
 db.run('PRAGMA foreign_keys = ON;'); // ovoa e za da moze da go izbrisam redot sto ima foreign key!!!!
 
 });
